@@ -1,8 +1,15 @@
-import { IAugmentedJQuery, IComponentOptions } from 'angular'
+import { IAugmentedJQuery, ICompileService, IComponentOptions, IScope, ITranscludeFunction} from 'angular'
 import fromPairs = require('lodash.frompairs')
 import NgComponent from 'ngcomponent'
 import * as React from 'react'
 import { render, unmountComponentAtNode } from 'react-dom'
+import HTMLtoJSX = require('htmltojsx')
+import Parser = require('html-react-parser')
+
+
+const converter = new HTMLtoJSX({
+  createClass: false
+})
 
 /**
  * Wraps a React component in Angular. Returns a new Angular component.
@@ -15,7 +22,7 @@ import { render, unmountComponentAtNode } from 'react-dom'
  *   const AngularComponent = react2angular(ReactComponent, ['foo'])
  *   ```
  */
-export function react2angular<Props>(
+export function react2angular<Props, States>(
   Class: React.ComponentClass<Props> | React.SFC<Props>,
   bindingNames?: (keyof Props)[]
 ): IComponentOptions {
@@ -25,17 +32,49 @@ export function react2angular<Props>(
 
   return {
     bindings: fromPairs(names.map(_ => [_, '<'])),
-    controller: ['$element', class extends NgComponent<Props> {
-      constructor(private $element: IAugmentedJQuery) {
-        super()
-      }
-      render() {
-        // TODO: rm any when https://github.com/Microsoft/TypeScript/pull/13288 is merged
-        render(<Class {...(this.props as any)} />, this.$element[0])
-      }
-      componentWillUnmount() {
-        unmountComponentAtNode(this.$element[0])
-      }
-    }]
+    controller: ['$element', '$transclude', '$compile', class extends NgComponent<Props, States> {
+        private transcludedContent: JQuery
+        private transclusionScope: IScope
+
+        constructor(private $element: IAugmentedJQuery, private $transclude: ITranscludeFunction, private $compile: ICompileService) {
+        // constructor(private $element: IAugmentedJQuery) {
+          super()
+        }
+        // render() {
+        //   // TODO: rm any when https://github.com/Microsoft/TypeScript/pull/13288 is merged
+        //   render(<Class {...(this.props as any)} />, this.$element[0])
+        // }
+        render() {
+          let children;
+          this.$transclude((clone: JQuery, scope: IScope) => {
+              children = Array.prototype.slice.call(clone).map((element: HTMLElement) => {
+                this.$compile(element)(scope)
+                const phase = scope.$root.$$phase
+                if (phase !== '$apply' && phase !== '$digest') {
+                  scope.$apply()
+                }
+                return converter.convert(element.outerHTML)
+              })
+              this.transcludedContent = clone
+              this.transclusionScope = scope
+            });
+            render(
+                <Class {...(this.props as any)}>
+                  {Parser(children && (children as string[]).join(''))}
+                </Class>,
+                this.$element[0]
+              );   
+        }
+        componentWillUnmount() {
+          unmountComponentAtNode(this.$element[0])
+        }
+
+        $onDestroy() {
+          super.$onDestroy()
+          this.transcludedContent.remove()
+          this.transclusionScope.$destroy()
+        }
+    }],
+    transclude: true
   }
 }
