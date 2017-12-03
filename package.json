@@ -1,5 +1,5 @@
 {
-  "name": "rta",
+  "name": "react2angular",
   "version": "3.0.2",
   "description": "The easiest way to embed React components in Angular 1 apps!",
   "main": "index.js",
